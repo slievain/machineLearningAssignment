@@ -22,6 +22,8 @@ The goal is to predict the manner in which they did the exercise.
 The data for this project comes from this source: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har).
 
 ```{r}
+library(parallel)
+library(doParallel)
 library(caret)
 library(randomForest)
 
@@ -134,30 +136,36 @@ pmlTraining <- pmlTraining[, !(names(pmlTraining) %in% c(IMU_features))]
 
 After several tests, random forest seems to be the best algorithm for the current application.
 ```{r cache=TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
 # First approach: all data points are taken into account
 formula <- as.formula("classe ~ roll_belt + pitch_belt + yaw_belt + roll_dumbbell + roll_arm + roll_forearm + pitch_dumbbell + pitch_arm + pitch_forearm + yaw_dumbbell + yaw_arm + yaw_forearm")
 
 modelFit <- train(formula, method = "rf", data = pmlTraining, importance = TRUE,
-                  trControl = trainControl(formula, method = "cv", number = 10))
+                  trControl = trainControl(method = "cv", number = 10, allowParallel = TRUE))
+
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
 ## Cross Validation
+```{r}
+confusionMatrix.train(modelFit)
+```
+The average accuracy is therefore `r paste0(round(100 * (sum(diag(confusionMatrix.train(modelFit)$table))) / sum(confusionMatrix.train(modelFit)$table), 2), "%")`.
 
 By applying cross validation, the best tuning parameters were looked at.  
 For the random forest algorithm, only the `mtry` parameter (number of variables randomly sampled as candidates at each split) can be optimized.
 
 ```{r}
-print(modelFit$results)
+modelFit$results
 ```
 We can see that the best accuracy (`r paste0(round(100 * modelFit$results[modelFit$results$mtry == modelFit$bestTune$mtry, ]$Accuracy, 2), "%")`) is obtained with the `mtry` parameter set to `r modelFit$bestTune`.
 
 ## Expected Out of Sample Error
 
 Our final Model has an out-of-bag error rate of `r paste0(round(100 * (sum(modelFit$finalModel$confusion[, -6]) - sum(diag(modelFit$finalModel$confusion[, -6]))) / sum(modelFit$finalModel$confusion[, -6]), 2), "%")`.  
-The associated confusion matrix is displayed below:
-```{r}
-modelFit$finalModel$confusion
-```
 
 For informational purposes a plot of the error rate versus number of trees is also shown.
 
@@ -281,20 +289,27 @@ Columns for which NAs remains have been filtered out.
 We can now fit a model:
 
 ```{r cache=TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
 featuresToKeep <- agg_features[ !(agg_features %in% featuresToDrop)]
 formula <- as.formula(paste0("classe ~ ", paste(featuresToKeep, collapse = " + ")))
 
 modelFit <- train(formula, method = "rf", data = cleanData, 
                   trControl = trainControl(formula, method = "cv", number = 10))
+
+stopCluster(cluster)
+registerDoSEQ()
 ```
 
-Using cross-validation, we can see that we obtain an accuracy of `r paste0(round(100 * modelFit$results[modelFit$results$mtry == modelFit$bestTune$mtry, ]$Accuracy, 2), "%")` with the `mtry` parameter set to `r modelFit$bestTune$mtry`.
+```{r}
+confusionMatrix.train(modelFit)
+```
+The average accuracy calculated during cross-validation is `r paste0(round(100 * (sum(diag(confusionMatrix.train(modelFit)$table))) / sum(confusionMatrix.train(modelFit)$table), 2), "%")`.
+
+Cross-validation was also used to tune parameters. We obtain the best accuracy (`r paste0(round(100 * modelFit$results[modelFit$results$mtry == modelFit$bestTune$mtry, ]$Accuracy, 2), "%")`) with the `mtry` parameter set to `r modelFit$bestTune$mtry`.
 
 Our final Model has an out-of-bag error rate of `r paste0(round(100 * (sum(modelFit$finalModel$confusion[, -6]) - sum(diag(modelFit$finalModel$confusion[, -6]))) / sum(modelFit$finalModel$confusion[, -6]), 2), "%")`.  
-The associated confusion matrix is displayed below:
-```{r}
-modelFit$finalModel$confusion
-```
 
 Results obtained via the second approach are way less accurate than the first approach.  
 Nevertheless, this result could probably be improved by collecting more data (only `r dim(training_agg_lines)[1]` aggregated lines).
